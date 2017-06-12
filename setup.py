@@ -9,6 +9,6 @@ setup(name='ciborg',
       license='MIT',
       packages=['ciborg'],
       entry_points = {
-          'console_scripts': ['ciborg=ciborg.ciborg:main'],
+          'console_scripts': ['ciborg=ciborg.command_line:main'],
       }
       zip_safe=False)

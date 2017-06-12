@@ -3,6 +3,7 @@
 import aws
 import jenkins
 import ssh
+import util
 import requests
 import nmap
 import pprint
@@ -40,12 +41,12 @@ class CIborg:
                             results.append(host + ':' + str(port))
         return results
 
-    def find_by_range(self):
-        print 'Scanning %s' % self.ip_range
+    def find_by_range(self, iprange):
+        print 'Scanning %s' % iprange
         targets = {}
         for plugin in self.plugins:
             ports = ','.join([str(x) for x in plugin.DEFAULT_PORTS])
-            results = self.portscan(self.ip_range, ports)
+            results = self.portscan(iprange, ports)
 
             for result in results:
                 print 'Trying candidate system %s' % result
@@ -80,10 +81,29 @@ class CIborg:
                         print 'Error %d getting %s' % (res.status_code, url)
         return targets
 
+    def find_by_udp(self):
+        targets = {}
+        return targets
+
+    def find_by_aws(self):
+        targets = {}
+        scanner = aws.AWSScanner()
+        hosts = scanner.run()
+
+        for group in list(util.chunks(hosts, 50)):
+            print 'Scanning %d hosts...' % len(group)
+            targets.update(self.find_by_range(','.join([str(x) for x in group])))
+
+        return targets
+
     def run(self):
         targets = {}
 
         if self.ip_range:
-            targets.update(self.find_by_range())
+            targets.update(self.find_by_range(self.ip_range))
+        if self.udp_scan:
+            targets.update(self.find_by_udp())
+        if self.use_aws:
+            targets.update(self.find_by_aws())
 
         pprint.pprint(targets)

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import aws
-import jenkins
+import jenkins_plugin
 import ssh
 import util
 import requests
@@ -13,10 +13,10 @@ class CIborg:
 
     def __init__(self, opts):
         requests.packages.urllib3.disable_warnings()
-        self.plugins = [ jenkins ]
+        self.plugins  = [ jenkins_plugin ]
         self.ip_range = opts.pop('ip_range', None)
         self.udp_scan = opts.pop('udp_scan', False)
-        self.use_aws = opts.pop('use_aws', False)
+        self.use_aws  = opts.pop('use_aws', False)
 
     def scanresult_to_url(self, ip, port, path):
         if '443' in str(port):
@@ -72,11 +72,19 @@ class CIborg:
                         print 'Redirect error: ' + str(e)
                         continue
 
-                    if res.status_code == 200:
+                    if res.status_code == 200 or res.status_code == 403 or res.status_code == 401:
                         print 'Success getting %s' % url 
-                        if plugin.fingerprint(res.text):
+                        fp = plugin.fingerprint(res)
+                        if fp:
                             print 'Found %s' % plugin.TARGET_NAME
-                            targets[ip] = { 'port': port, 'path': path, 'plugin': plugin }
+                            if ip not in targets:
+                                targets[ip] = []
+                            targets[ip].append({
+                                'port': port,
+                                'path': path,
+                                'plugin': plugin,
+                                'status': fp
+                            })
                     else:
                         print 'Error %d getting %s' % (res.status_code, url)
         return targets

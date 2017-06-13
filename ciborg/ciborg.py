@@ -32,7 +32,7 @@ class CIborg:
     def portscan(self, ip_range, ports):
         results = []
         nm = nmap.PortScanner()
-        res = nm.scan(ip_range, ports)
+        res = nm.scan(ip_range, ports, arguments='-Pn -T4')
         if 'scan' in res:
             for host, values in res['scan'].iteritems():
                 if 'tcp' in values:
@@ -76,7 +76,7 @@ class CIborg:
                         print 'Success getting %s' % url 
                         if plugin.fingerprint(res.text):
                             print 'Found %s' % plugin.TARGET_NAME
-                            targets[ip] = { 'port': port, 'path': path, 'type': plugin }
+                            targets[ip] = { 'port': port, 'path': path, 'plugin': plugin }
                     else:
                         print 'Error %d getting %s' % (res.status_code, url)
         return targets
@@ -92,7 +92,7 @@ class CIborg:
 
         for group in list(util.chunks(hosts, 50)):
             print 'Scanning %d hosts...' % len(group)
-            targets.update(self.find_by_range(','.join([str(x) for x in group])))
+            targets.update(self.find_by_range(' '.join([str(x) for x in group])))
 
         return targets
 

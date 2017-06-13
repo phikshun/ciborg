@@ -8,6 +8,7 @@ import requests
 import nmap
 import pprint
 import urllib3
+import socket
 
 class CIborg:
 
@@ -89,8 +90,33 @@ class CIborg:
                         print 'Error %d getting %s' % (res.status_code, url)
         return targets
 
+    def parse_udp_response(self, data, host):
+        if 'hudson' in data or 'jenkins' in data:
+            return host[0]
+        else:
+            return None
+
     def find_by_udp(self):
+        hosts = []
         targets = {}
+
+        address = ('255.255.255.255', 33848)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(0.2)
+        sock.sendto('\n', address)
+
+        for _ in range(20):
+            try:
+                hosts.append(self.parse_udp_response(*sock.recvfrom(65535)))
+            except socket.timeout:
+                continue
+
+        for host in hosts:
+            if host is None:
+                continue
+            targets.update(self.find_by_range(host))
         return targets
 
     def find_by_aws(self):

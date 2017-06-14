@@ -74,6 +74,7 @@ class SSHBrute():
         target_lists = []
         ssh_keys = []
         count = 0
+
         for i in range(self.threads):
             creds.append([])
 

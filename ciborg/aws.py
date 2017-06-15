@@ -15,8 +15,10 @@ class AWSScanner:
                                                      'Name': 'instance-state-name',
                                                      'Values': ['running']}])
             for instance in running_instances:
-                hosts.append(instance.public_ip_address)
-                hosts.append(instance.private_ip_address)
+                if instance.public_ip_address is not None:
+                    hosts.append(instance.public_ip_address)
+                if instance.private_ip_address is not None:
+                    hosts.append(instance.private_ip_address)
 
         except botocore.exceptions.ClientError as e:
             print 'Error accessing AWS: ' + str(e)

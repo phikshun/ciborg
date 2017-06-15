@@ -37,7 +37,7 @@ def check_script_console(target):
     else:
         script_url = target['url'] + '/script'
     try:
-        res = requests.get(script_url, verify=False, timeout=5)
+        res = requests.get(script_url, verify=False, timeout=10)
         if res.status_code == 200 and \
                 '<title>Jenkins</title>' in res.text and 'Script Console' in res.text:
             return { 'script_console': True }

@@ -4,11 +4,14 @@ import aws
 import jenkins_plugin
 import ssh
 import util
+import time
 import requests
 import nmap
 import pprint
 import urllib3
 import socket
+from threading import Thread, Semaphore, active_count
+from requests.exceptions import SSLError, ConnectionError, RequestException, Timeout
 
 class CIborg:
 
@@ -18,6 +21,8 @@ class CIborg:
         self.ip_range = opts.pop('ip_range', None)
         self.udp_scan = opts.pop('udp_scan', False)
         self.use_aws  = opts.pop('use_aws', False)
+        self.threads  = 20
+        self.thread_lock = Semaphore(value=1)
 
     def scanresult_to_url(self, ip, port, path):
         if '443' in str(port):
@@ -42,6 +47,40 @@ class CIborg:
                             results.append(host + ':' + str(port))
         return results
 
+    def web_scan_thread(self, targets, plugin, ip, port, path):
+        url = self.scanresult_to_url(ip, port, path)
+        res = None
+        try:
+            res = requests.get(url, verify=False, timeout=10)
+        except (SSLError, ConnectionError, Timeout, RequestException,
+                    urllib3.exceptions.LocationParseError) as e:
+            self.thread_lock.acquire()
+            print 'Error: ' + str(e)
+            self.thread_lock.release()
+            return
+
+        if res and res.status_code == 200 or res.status_code == 403 or res.status_code == 401:
+            self.thread_lock.acquire()
+            print 'Success getting %s' % url 
+            fp = plugin.fingerprint(res)
+            if fp:
+                print 'Found %s' % plugin.TARGET_NAME
+                if ip not in targets:
+                    targets[ip] = []
+                targets[ip].append({
+                    'url': url,
+                    'port': port,
+                    'path': path,
+                    'plugin': plugin,
+                    'status': fp
+                })
+            self.thread_lock.release()
+        else:
+            self.thread_lock.acquire()
+            print 'Error %d getting %s' % (res.status_code, url)
+            self.thread_lock.release()
+        return
+
     def find_by_range(self, iprange):
         print 'Scanning %s' % iprange
         targets = {}
@@ -53,42 +92,12 @@ class CIborg:
                 print 'Trying candidate system %s' % result
                 ip, port = result.split(':')
                 for path in plugin.DEFAULT_PATHS:
-                    url = self.scanresult_to_url(ip, port, path)
-                    try:
-                        print url
-                        res = requests.get(url, verify=False, timeout=2)
-                    except requests.exceptions.SSLError as e:
-                        print 'SSL connection error'
-                        continue
-                    except requests.exceptions.ConnectionError as e:
-                        print 'Connection error'
-                        continue
-                    except requests.exceptions.Timeout as e:
-                        print 'Connection timeout'
-                        continue
-                    except requests.exceptions.RequestException as e:
-                        print 'Error: ' + str(e)
-                        continue
-                    except urllib3.exceptions.LocationParseError as e:
-                        print 'Redirect error: ' + str(e)
-                        continue
-
-                    if res.status_code == 200 or res.status_code == 403 or res.status_code == 401:
-                        print 'Success getting %s' % url 
-                        fp = plugin.fingerprint(res)
-                        if fp:
-                            print 'Found %s' % plugin.TARGET_NAME
-                            if ip not in targets:
-                                targets[ip] = []
-                            targets[ip].append({
-                                'url': url,
-                                'port': port,
-                                'path': path,
-                                'plugin': plugin,
-                                'status': fp
-                            })
-                    else:
-                        print 'Error %d getting %s' % (res.status_code, url)
+                    while active_count() > self.threads:
+                        time.sleep(0.1)
+                    t = Thread(target=self.web_scan_thread, args=(targets, plugin, ip, port, path))
+                    t.start()
+        while active_count() > 1:
+            time.sleep(0.1)
         return targets
 
     def parse_udp_response(self, data, host):
@@ -125,7 +134,7 @@ class CIborg:
         scanner = aws.AWSScanner()
         hosts = scanner.run()
 
-        for group in list(util.chunks(hosts, 50)):
+        for group in list(util.chunks(hosts, 100)):
             print 'Scanning %d hosts...' % len(group)
             targets.update(self.find_by_range(' '.join([str(x) for x in group])))
 

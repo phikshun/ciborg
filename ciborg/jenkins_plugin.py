@@ -4,10 +4,6 @@ import requests
 import jenkins
 import urllib3
 import re
-import base64
-from hashlib import sha256
-from binascii import hexlify, unhexlify
-from Crypto.Cipher import AES
 from bs4 import BeautifulSoup
 
 DEFAULT_PORTS = [80, 8080, 443, 8000, 8081]

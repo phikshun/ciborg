@@ -1,0 +1,7 @@
+requests==2.17.3
+python-jenkins==0.4.14
+boto3==1.4.4
+paramiko==2.2.0
+beautifulsoup4==4.6.0
+lxml==3.8.0
+python-nmap==0.6.1
